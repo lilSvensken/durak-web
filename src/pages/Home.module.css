@@ -1,0 +1,58 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  gap: 24px;
+  padding: 24px;
+}
+
+.title {
+  font-size: 2.5rem;
+  letter-spacing: 2px;
+}
+
+.tabs {
+  display: flex;
+  gap: 8px;
+  background: #1e1e2a;
+  padding: 6px;
+  border-radius: 12px;
+}
+
+.tab, .tabActive {
+  background: transparent;
+  color: #aaa;
+  border-radius: 8px;
+  padding: 8px 18px;
+  font-size: 0.9rem;
+}
+
+.tabActive {
+  background: #7c6af7;
+  color: #fff;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 340px;
+}
+
+.error {
+  color: #ff6b6b;
+  font-size: 0.875rem;
+  text-align: center;
+}
+
+.submit {
+  background: #7c6af7;
+  color: #fff;
+  padding: 12px;
+  font-size: 1rem;
+  margin-top: 4px;
+}
+.submit:hover:not(:disabled) { opacity: 0.85; }

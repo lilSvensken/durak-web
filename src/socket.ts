@@ -1,10 +1,9 @@
 import { io, Socket } from 'socket.io-client';
-import { Role, RoomView } from './types';
+import { Card, RoomView } from './types';
 
 interface ServerToClientEvents {
   'room:updated': (room: RoomView) => void;
   'room:error': (message: string) => void;
-  'game:role': (role: Role) => void;
 }
 
 interface ClientToServerEvents {
@@ -12,6 +11,11 @@ interface ClientToServerEvents {
   'room:join': (payload: { code: string; name: string }, cb: (err: string | null) => void) => void;
   'room:start': (cb: (err: string | null) => void) => void;
   'room:leave': () => void;
+  'game:attack': (card: Card, cb: (err: string | null) => void) => void;
+  'game:defend': (payload: { attack: Card; defense: Card }, cb: (err: string | null) => void) => void;
+  'game:throw': (card: Card, cb: (err: string | null) => void) => void;
+  'game:take': (cb: (err: string | null) => void) => void;
+  'game:done': (cb: (err: string | null) => void) => void;
 }
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL ?? 'http://localhost:3001';

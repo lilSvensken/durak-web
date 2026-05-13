@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Path \"D:\\\\projects\\\\mafia-web\" -Recurse -Force)",
+      "Bash(Select-Object -First 100 FullName)",
+      "Bash(find \"D:\\\\projects\\\\mafia-web\" -type f | head -100)",
+      "Bash(npx tsc *)",
+      "Bash(dir D:/projects/mafia-web/src/)",
+      "Bash(npm run *)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(git add *)"
+    ]
+  }
+}
