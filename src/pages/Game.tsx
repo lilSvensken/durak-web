@@ -17,6 +17,11 @@ const SUIT_RED: Record<Suit, boolean> = {
   clubs: false,
 };
 
+const RANK_ORDER: Record<string, number> = {
+  '6': 0, '7': 1, '8': 2, '9': 3, '10': 4,
+  'J': 5, 'Q': 6, 'K': 7, 'A': 8,
+};
+
 function cardKey(card: Card) {
   return `${card.rank}-${card.suit}`;
 }
@@ -61,7 +66,6 @@ interface Props {
 }
 
 export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
-  const [selectedCard, setSelectedCard] = useState<Card | null>(null);
   const [error, setError] = useState('');
   const [startError, setStartError] = useState('');
 
@@ -81,9 +85,11 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
     setError('');
 
     if (isDefender) {
-      const alreadySelected =
-        selectedCard?.suit === card.suit && selectedCard?.rank === card.rank;
-      setSelectedCard(alreadySelected ? null : card);
+      const openSlot = room.table.find(slot => slot.defense === null);
+      if (!openSlot) return;
+      socket.emit('game:defend', { attack: openSlot.attack, defense: card }, (err) => {
+        if (err) setError(err);
+      });
       return;
     }
 
@@ -99,18 +105,6 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
         if (err) setError(err);
       });
     }
-  }
-
-  function handleSlotClick(attackCard: Card) {
-    if (!isDefender || !selectedCard) return;
-    setError('');
-    socket.emit('game:defend', { attack: attackCard, defense: selectedCard }, (err) => {
-      if (err) {
-        setError(err);
-      } else {
-        setSelectedCard(null);
-      }
-    });
   }
 
   function handleTake() {
@@ -191,8 +185,10 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
   // ── Игра ───────────────────────────────────────────────────────────────────
   let phaseLabel = 'Ожидание';
   if (isAttacker) phaseLabel = 'Ваш ход — атакуйте';
-  else if (isDefender) phaseLabel = selectedCard ? 'Выберите карту для прикрытия' : 'Защищайтесь';
+  else if (isDefender) phaseLabel = 'Защищайтесь';
   else if (room.canThrow) phaseLabel = 'Можно подкинуть';
+
+  const sortedCards = [...room.myCards].sort((a, b) => RANK_ORDER[a.rank] - RANK_ORDER[b.rank]);
 
   return (
     <div className={styles.container}>
@@ -255,22 +251,11 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
           <div className={styles.tableSlots}>
             {room.table.map((slot, i) => (
               <div key={i} className={styles.slot}>
-                <CardView
-                  card={slot.attack}
-                  onClick={() => handleSlotClick(slot.attack)}
-                  disabled={!isDefender || !selectedCard || slot.defense !== null}
-                  dimmed={slot.defense !== null}
-                />
+                <CardView card={slot.attack} dimmed={slot.defense !== null} />
                 {slot.defense ? (
                   <CardView card={slot.defense} />
                 ) : (
-                  <div
-                    className={[
-                      styles.emptySlot,
-                      isDefender && selectedCard ? styles.emptySlotActive : '',
-                    ].join(' ')}
-                    onClick={() => handleSlotClick(slot.attack)}
-                  />
+                  <div className={styles.emptySlot} />
                 )}
               </div>
             ))}
@@ -300,18 +285,12 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
       <div className={styles.hand}>
         <h3 className={styles.sectionLabel}>
           Моя рука ({room.myCards.length})
-          {isDefender && selectedCard && (
-            <span className={styles.handHint}> — теперь нажмите на карту атаки</span>
-          )}
         </h3>
         <div className={styles.handCards}>
-          {room.myCards.map((card) => (
+          {sortedCards.map((card) => (
             <CardView
               key={cardKey(card)}
               card={card}
-              selected={
-                selectedCard?.suit === card.suit && selectedCard?.rank === card.rank
-              }
               onClick={() => handleCardClick(card)}
               disabled={!canAct}
             />
