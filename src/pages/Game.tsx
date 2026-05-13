@@ -269,6 +269,7 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
                       styles.emptySlot,
                       isDefender && selectedCard ? styles.emptySlotActive : '',
                     ].join(' ')}
+                    onClick={() => handleSlotClick(slot.attack)}
                   />
                 )}
               </div>
