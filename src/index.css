@@ -1,0 +1,36 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: system-ui, sans-serif;
+  background: #0f0f14;
+  color: #e8e8e8;
+  min-height: 100dvh;
+}
+
+#root {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 20px;
+  font-size: 1rem;
+  font-weight: 600;
+  transition: opacity 0.15s;
+}
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+input {
+  background: #1e1e2a;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 1rem;
+  color: #e8e8e8;
+  width: 100%;
+}
+input:focus { outline: 2px solid #7c6af7; }
