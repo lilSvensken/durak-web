@@ -25,6 +25,21 @@ const RANK_ORDER: Record<string, number> = {
 
 const EMOJIS = ['👍', '😂', '🤔', '😱', '🤦'];
 
+const PHRASES = {
+  myTurnStart:  ['Твой ход 👀', 'Ходи давай', 'Ну, удиви меня', 'Жду…'],
+  inactivity:   ['Я жду 🥱', 'Заснул?', 'Ну чего ты…', 'Тук-тук, твой ход'],
+  opponentTake: ['Эх, заберу…', 'Ладно, мои будут', 'Ну вы, блин, даёте 😤', 'Беру, беру'],
+  bito:         ['Отбито 😎', 'Не на того напал', 'Изи', 'Дальше!'],
+  throw:        ['А вот ещё!', 'Держи подарочек 🎁', 'И эту отбей', 'Не всё ещё'],
+  lastCard:     ['Последняя!', 'Почти всё…', 'Ещё чуть-чуть', 'Я близко 🔥'],
+} as const;
+
+function pickPhrase(bucket: readonly string[], lastPhrase?: string): string {
+  const choices = lastPhrase ? bucket.filter(p => p !== lastPhrase) : [...bucket];
+  const pool = choices.length > 0 ? choices : [...bucket];
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
 function beats(attack: Card, defense: Card, trump: Suit): boolean {
   if (attack.suit === trump) {
     return defense.suit === trump && RANK_ORDER[defense.rank] > RANK_ORDER[attack.rank];
@@ -53,6 +68,20 @@ function playTurnSound() {
 
 function cardKey(card: Card) {
   return `${card.rank}-${card.suit}`;
+}
+
+function SpeechBubble({ text }: { text: string }) {
+  return (
+    <motion.div
+      className={styles.speechBubble}
+      initial={{ opacity: 0, scale: 0.4 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.7 }}
+      transition={{ type: 'spring', stiffness: 450, damping: 22 }}
+    >
+      {text}
+    </motion.div>
+  );
 }
 
 function CardView({
@@ -105,8 +134,22 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
   const [codeCopied, setCodeCopied] = useState(false);
   const [showHint, setShowHint] = useState(false);
   const [reactions, setReactions] = useState<Record<string, string>>({});
+  const [opponentBubble, setOpponentBubble] = useState<{ text: string; key: number; targetId: string } | null>(null);
+  const [lastActionAt, setLastActionAt] = useState(0);
+
   const wasMyTurn = useRef(false);
   const hintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Speech bubble refs
+  const bubbleKeyRef = useRef(0);
+  const lastBubbleTextRef = useRef('');
+  const bubbleHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const nudgeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Previous-state refs for detecting game events
+  const prevTableLengthRef = useRef(-1);
+  const prevDefenderIdRef = useRef('');
+  const prevDefenderTakingRef = useRef(false);
+  const prevOpponentCardCountsRef = useRef<Record<string, number>>({});
 
   const isHost = room.hostId === myId;
   const isAttacker = room.attackerId === myId;
@@ -139,14 +182,105 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
     }
   }
 
-  // Sound + vibrate when turn starts
+  const otherPlayers = room.players.filter(p => p.id !== myId);
+
+  function showBubble(text: string, targetId: string) {
+    if (bubbleHideTimerRef.current) clearTimeout(bubbleHideTimerRef.current);
+    bubbleKeyRef.current += 1;
+    lastBubbleTextRef.current = text;
+    setOpponentBubble({ text, key: bubbleKeyRef.current, targetId });
+    bubbleHideTimerRef.current = setTimeout(() => setOpponentBubble(null), 3000);
+  }
+
+  // Sound + vibrate + "your turn" bubble when turn starts.
+  // Defined first so context bubbles (room effect below) override via React batching.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (isMyTurn && !wasMyTurn.current) {
       playTurnSound();
       navigator.vibrate?.(50);
+      if (otherPlayers.length > 0) {
+        const speaker = (isAttacker
+          ? otherPlayers.find(p => p.id === room.defenderId)
+          : otherPlayers.find(p => p.id === room.attackerId))
+          ?? otherPlayers[0];
+        showBubble(pickPhrase(PHRASES.myTurnStart, lastBubbleTextRef.current), speaker.id);
+      }
     }
     wasMyTurn.current = isMyTurn;
   }, [isMyTurn]);
+
+  // Detect game events from room state changes and show context bubbles.
+  // Runs after the turn-start effect so its setState wins via React 18 batching
+  // when both fire in the same flush (e.g. bito + my new turn).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const tableLen = room.table.length;
+    const prevTableLen = prevTableLengthRef.current;
+
+    // Skip first mount — just initialize refs
+    if (prevTableLen === -1) {
+      prevTableLengthRef.current = tableLen;
+      prevDefenderIdRef.current = room.defenderId;
+      prevDefenderTakingRef.current = room.defenderTaking;
+      for (const p of otherPlayers) prevOpponentCardCountsRef.current[p.id] = p.cardCount;
+      return;
+    }
+
+    // Opponent reached their last card
+    for (const p of otherPlayers) {
+      const prev = prevOpponentCardCountsRef.current[p.id] ?? p.cardCount;
+      if (p.cardCount === 1 && prev > 1) {
+        showBubble(pickPhrase(PHRASES.lastCard, lastBubbleTextRef.current), p.id);
+      }
+    }
+
+    // Table just cleared — bito or take?
+    if (prevTableLen > 0 && tableLen === 0) {
+      const prevDefId = prevDefenderIdRef.current;
+      const wasOpponentDefender = prevDefId !== '' && prevDefId !== myId;
+      if (wasOpponentDefender) {
+        if (prevDefenderTakingRef.current) {
+          // Defender had signalled taking → it's a take
+          showBubble(pickPhrase(PHRASES.opponentTake, lastBubbleTextRef.current), prevDefId);
+        } else {
+          // All cards covered + attacker confirmed → бито
+          showBubble(pickPhrase(PHRASES.bito, lastBubbleTextRef.current), prevDefId);
+        }
+      }
+    }
+
+    // Opponent threw an extra card while I'm defending
+    if (isDefender && tableLen > prevTableLen && prevTableLen > 0) {
+      const thrower = otherPlayers.find(p => p.id === room.attackerId) ?? otherPlayers[0];
+      if (thrower) {
+        showBubble(pickPhrase(PHRASES.throw, lastBubbleTextRef.current), thrower.id);
+      }
+    }
+
+    // Update prev refs
+    prevTableLengthRef.current = tableLen;
+    prevDefenderIdRef.current = room.defenderId;
+    prevDefenderTakingRef.current = room.defenderTaking;
+    for (const p of otherPlayers) prevOpponentCardCountsRef.current[p.id] = p.cardCount;
+  }, [room]);
+
+  // Inactivity nudge: 15 s → bubble, repeats every 20 s. Resets on any action.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!isMyTurn || otherPlayers.length === 0) return;
+    const targetId = otherPlayers[0].id;
+    const first = setTimeout(() => {
+      showBubble(pickPhrase(PHRASES.inactivity, lastBubbleTextRef.current), targetId);
+      nudgeTimerRef.current = setTimeout(() => {
+        showBubble(pickPhrase(PHRASES.inactivity, lastBubbleTextRef.current), targetId);
+      }, 20_000);
+    }, 15_000);
+    return () => {
+      clearTimeout(first);
+      if (nudgeTimerRef.current) { clearTimeout(nudgeTimerRef.current); nudgeTimerRef.current = null; }
+    };
+  }, [isMyTurn, lastActionAt]);
 
   // Wiggle hint: 30s inactivity when it's your turn (attack or defend)
   const shouldHint = (isDefender && !!firstOpenSlot) || (isAttacker && room.table.length === 0);
@@ -204,6 +338,7 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
   }
 
   function handleCardClick(card: Card) {
+    setLastActionAt(Date.now());
     setError('');
     resetHintTimer();
 
@@ -231,6 +366,7 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
   }
 
   function handleTake() {
+    setLastActionAt(Date.now());
     setError('');
     socket.emit('game:take', (err) => {
       if (err) setError(err);
@@ -245,14 +381,13 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
   }
 
   function handleDone() {
+    setLastActionAt(Date.now());
     setError('');
     resetHintTimer();
     socket.emit('game:done', (err) => {
       if (err) setError(err);
     });
   }
-
-  const otherPlayers = room.players.filter(p => p.id !== myId);
 
   // ── Лобби ──────────────────────────────────────────────────────────────────
   if (room.phase === 'lobby') {
@@ -368,6 +503,15 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
                 p.isDone ? styles.opponentDone : '',
               ].join(' ')}
             >
+              {/* Speech bubble — context bubble wins over "your turn" via React 18 batching */}
+              <div className={styles.speechBubbleWrapper}>
+                <AnimatePresence>
+                  {opponentBubble?.targetId === p.id && (
+                    <SpeechBubble key={opponentBubble.key} text={opponentBubble.text} />
+                  )}
+                </AnimatePresence>
+              </div>
+
               {reactions[p.id] && (
                 <span className={styles.reactionBubble}>{reactions[p.id]}</span>
               )}
@@ -425,21 +569,18 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
       {/* Ошибка */}
       {error && <p className={styles.error}>{error}</p>}
 
-      {/* Кнопки действий — только нужные */}
+      {/* Кнопки действий */}
       <div className={styles.actionButtons}>
-        {/* Защитник: "Взять карты" пока не подтвердил взятие */}
         {isDefender && !room.defenderTaking && (
           <button className={styles.takeBtn} onClick={handleTake}>
             Взять карты
           </button>
         )}
-        {/* Атакующий: "Подтвердить" когда защитник берёт */}
         {isAttacker && room.defenderTaking && (
           <button className={styles.confirmBtn} onClick={handleConfirmTake}>
             Подтвердить
           </button>
         )}
-        {/* Атакующий: "Бито" после хода и когда все карты прикрыты */}
         {isAttacker && !room.defenderTaking && room.table.length > 0 && (
           <button className={styles.doneBtn} onClick={handleDone}>
             Бито
