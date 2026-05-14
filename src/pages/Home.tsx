@@ -1,6 +1,8 @@
-import { useState, FormEvent } from 'react';
+import { useState, useEffect, FormEvent } from 'react';
 import { socket } from '../socket';
 import styles from './Home.module.css';
+
+const SESSION_KEY = 'durak_session';
 
 interface Props {
   onJoined: (name: string) => void;
@@ -13,6 +15,16 @@ export default function Home({ onJoined }: Props) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  // Auto-fill code from ?code= URL param
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const urlCode = params.get('code');
+    if (urlCode) {
+      setCode(urlCode.toUpperCase());
+      setTab('join');
+    }
+  }, []);
+
   function connect() {
     if (!socket.connected) socket.connect();
   }
@@ -20,6 +32,7 @@ export default function Home({ onJoined }: Props) {
   function handleCreate(e: FormEvent) {
     e.preventDefault();
     if (!name.trim()) return;
+    localStorage.removeItem(SESSION_KEY);
     setLoading(true);
     setError('');
     connect();
@@ -32,6 +45,7 @@ export default function Home({ onJoined }: Props) {
   function handleJoin(e: FormEvent) {
     e.preventDefault();
     if (!name.trim() || !code.trim()) return;
+    localStorage.removeItem(SESSION_KEY);
     setLoading(true);
     setError('');
     connect();

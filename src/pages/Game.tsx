@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { socket } from '../socket';
 import { RoomView, Card, Suit } from '../types';
 import styles from './Game.module.css';
@@ -22,22 +22,48 @@ const RANK_ORDER: Record<string, number> = {
   'J': 5, 'Q': 6, 'K': 7, 'A': 8,
 };
 
+function beats(attack: Card, defense: Card, trump: Suit): boolean {
+  if (attack.suit === trump) {
+    return defense.suit === trump && RANK_ORDER[defense.rank] > RANK_ORDER[attack.rank];
+  }
+  if (defense.suit === trump) return true;
+  if (defense.suit !== attack.suit) return false;
+  return RANK_ORDER[defense.rank] > RANK_ORDER[attack.rank];
+}
+
+function playTurnSound() {
+  try {
+    const ctx = new AudioContext();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.3, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.3);
+  } catch {
+    // AudioContext not available
+  }
+}
+
 function cardKey(card: Card) {
   return `${card.rank}-${card.suit}`;
 }
 
 function CardView({
   card,
-  selected,
   onClick,
   disabled,
   dimmed,
+  valid,
 }: {
   card: Card;
-  selected?: boolean;
   onClick?: () => void;
   disabled?: boolean;
   dimmed?: boolean;
+  valid?: boolean;
 }) {
   const red = SUIT_RED[card.suit];
   return (
@@ -45,8 +71,8 @@ function CardView({
       className={[
         styles.card,
         red ? styles.cardRed : '',
-        selected ? styles.cardSelected : '',
         dimmed ? styles.cardDimmed : '',
+        valid ? styles.cardValid : '',
       ].join(' ')}
       onClick={onClick}
       disabled={disabled}
@@ -68,11 +94,37 @@ interface Props {
 export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
   const [error, setError] = useState('');
   const [startError, setStartError] = useState('');
+  const [copied, setCopied] = useState(false);
+  const wasMyTurn = useRef(false);
 
   const isHost = room.hostId === myId;
   const isAttacker = room.attackerId === myId;
   const isDefender = room.defenderId === myId;
   const canAct = isAttacker || isDefender || room.canThrow;
+  const isMyTurn = isAttacker || isDefender;
+
+  // Sound + vibrate when turn starts
+  useEffect(() => {
+    if (isMyTurn && !wasMyTurn.current) {
+      playTurnSound();
+      navigator.vibrate?.(50);
+    }
+    wasMyTurn.current = isMyTurn;
+  }, [isMyTurn]);
+
+  // Compute which hand cards can beat the first open attack slot
+  const firstOpenSlot = isDefender ? room.table.find(s => s.defense === null) : null;
+  const validDefenseKeys = firstOpenSlot && room.trumpSuit
+    ? new Set(room.myCards.filter(c => beats(firstOpenSlot.attack, c, room.trumpSuit!)).map(cardKey))
+    : null;
+
+  function handleCopyLink() {
+    const url = `${window.location.origin}?code=${room.code}`;
+    navigator.clipboard.writeText(url).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
 
   function handleStart() {
     setStartError('');
@@ -146,6 +198,10 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
             ))}
           </ul>
         </section>
+
+        <button className={styles.copyBtn} onClick={handleCopyLink}>
+          {copied ? '✓ Ссылка скопирована' : 'Скопировать ссылку на комнату'}
+        </button>
 
         {isHost ? (
           <div className={styles.lobbyActions}>
@@ -293,6 +349,8 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
               card={card}
               onClick={() => handleCardClick(card)}
               disabled={!canAct}
+              dimmed={validDefenseKeys !== null && !validDefenseKeys.has(cardKey(card))}
+              valid={validDefenseKeys !== null && validDefenseKeys.has(cardKey(card))}
             />
           ))}
           {room.myCards.length === 0 && (

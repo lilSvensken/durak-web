@@ -239,7 +239,12 @@
 }
 
 .cardDimmed {
-  opacity: 0.6;
+  opacity: 0.35;
+}
+
+.cardValid {
+  border-color: #2ecc71 !important;
+  box-shadow: 0 0 10px #2ecc7155;
 }
 
 .cardRank {
@@ -349,6 +354,18 @@
   background: #7c6af733;
   color: #7c6af7;
 }
+
+.copyBtn {
+  background: #1e1e2a;
+  color: #7c6af7;
+  border: 1px solid #7c6af744;
+  border-radius: 10px;
+  padding: 11px 16px;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.copyBtn:hover { background: #2a2a3a; }
 
 .lobbyActions {
   display: flex;
