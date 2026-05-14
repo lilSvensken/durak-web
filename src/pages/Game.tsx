@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { socket } from '../socket';
 import { RoomView, Card, Suit } from '../types';
 import styles from './Game.module.css';
@@ -21,6 +22,8 @@ const RANK_ORDER: Record<string, number> = {
   '6': 0, '7': 1, '8': 2, '9': 3, '10': 4,
   'J': 5, 'Q': 6, 'K': 7, 'A': 8,
 };
+
+const EMOJIS = ['👍', '😂', '🤔', '😱', '🤦'];
 
 function beats(attack: Card, defense: Card, trump: Suit): boolean {
   if (attack.suit === trump) {
@@ -57,13 +60,15 @@ function CardView({
   onClick,
   disabled,
   dimmed,
-  valid,
+  hint,
+  small,
 }: {
   card: Card;
   onClick?: () => void;
   disabled?: boolean;
   dimmed?: boolean;
-  valid?: boolean;
+  hint?: boolean;
+  small?: boolean;
 }) {
   const red = SUIT_RED[card.suit];
   return (
@@ -72,13 +77,17 @@ function CardView({
         styles.card,
         red ? styles.cardRed : '',
         dimmed ? styles.cardDimmed : '',
-        valid ? styles.cardValid : '',
+        hint ? styles.cardHint : '',
+        small ? styles.cardSmall : '',
       ].join(' ')}
       onClick={onClick}
       disabled={disabled}
+      style={small ? { width: 44, height: 64, fontSize: '0.7rem' } : undefined}
     >
       <span className={styles.cardRank}>{card.rank}</span>
-      <span className={styles.cardSuit}>{SUIT_SYMBOL[card.suit]}</span>
+      <span className={styles.cardSuit} style={small ? { fontSize: '1.1rem' } : undefined}>
+        {SUIT_SYMBOL[card.suit]}
+      </span>
       <span className={styles.cardRankBottom}>{card.rank}</span>
     </button>
   );
@@ -94,14 +103,22 @@ interface Props {
 export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
   const [error, setError] = useState('');
   const [startError, setStartError] = useState('');
-  const [copied, setCopied] = useState(false);
+  const [codeCopied, setCodeCopied] = useState(false);
+  const [showHint, setShowHint] = useState(false);
+  const [reactions, setReactions] = useState<Record<string, string>>({});
   const wasMyTurn = useRef(false);
+  const hintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const isHost = room.hostId === myId;
   const isAttacker = room.attackerId === myId;
   const isDefender = room.defenderId === myId;
   const canAct = isAttacker || isDefender || room.canThrow;
   const isMyTurn = isAttacker || isDefender;
+
+  const firstOpenSlot = isDefender ? room.table.find(s => s.defense === null) : null;
+  const validDefenseKeys = firstOpenSlot && room.trumpSuit
+    ? new Set(room.myCards.filter(c => beats(firstOpenSlot.attack, c, room.trumpSuit!)).map(cardKey))
+    : null;
 
   // Sound + vibrate when turn starts
   useEffect(() => {
@@ -112,18 +129,51 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
     wasMyTurn.current = isMyTurn;
   }, [isMyTurn]);
 
-  // Compute which hand cards can beat the first open attack slot
-  const firstOpenSlot = isDefender ? room.table.find(s => s.defense === null) : null;
-  const validDefenseKeys = firstOpenSlot && room.trumpSuit
-    ? new Set(room.myCards.filter(c => beats(firstOpenSlot.attack, c, room.trumpSuit!)).map(cardKey))
-    : null;
+  // Wiggle hint timer: 30s inactivity → show, resets on action
+  useEffect(() => {
+    setShowHint(false);
+    if (hintTimer.current) clearTimeout(hintTimer.current);
+    if (isDefender && firstOpenSlot) {
+      hintTimer.current = setTimeout(() => setShowHint(true), 30_000);
+    }
+    return () => { if (hintTimer.current) clearTimeout(hintTimer.current); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDefender, room.table.length]);
 
-  function handleCopyLink() {
+  function resetHintTimer() {
+    setShowHint(false);
+    if (hintTimer.current) clearTimeout(hintTimer.current);
+    if (isDefender && firstOpenSlot) {
+      hintTimer.current = setTimeout(() => setShowHint(true), 30_000);
+    }
+  }
+
+  // Emoji reactions listener
+  useEffect(() => {
+    function onReact({ playerId, emoji }: { playerId: string; emoji: string }) {
+      setReactions(prev => ({ ...prev, [playerId]: emoji }));
+      setTimeout(() => {
+        setReactions(prev => {
+          const next = { ...prev };
+          delete next[playerId];
+          return next;
+        });
+      }, 2500);
+    }
+    socket.on('react:received', onReact);
+    return () => { socket.off('react:received', onReact); };
+  }, []);
+
+  function handleCopyCode() {
     const url = `${window.location.origin}?code=${room.code}`;
     navigator.clipboard.writeText(url).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      setCodeCopied(true);
+      setTimeout(() => setCodeCopied(false), 2000);
     });
+  }
+
+  function handleReact(emoji: string) {
+    socket.emit('game:react', emoji);
   }
 
   function handleStart() {
@@ -135,6 +185,7 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
 
   function handleCardClick(card: Card) {
     setError('');
+    resetHintTimer();
 
     if (isDefender) {
       const openSlot = room.table.find(slot => slot.defense === null);
@@ -161,6 +212,7 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
 
   function handleTake() {
     setError('');
+    resetHintTimer();
     socket.emit('game:take', (err) => {
       if (err) setError(err);
     });
@@ -168,10 +220,19 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
 
   function handleDone() {
     setError('');
+    resetHintTimer();
     socket.emit('game:done', (err) => {
       if (err) setError(err);
     });
   }
+
+  // Sort: non-trumps by rank, then trumps by rank (trumps go right)
+  const sortedCards = [...room.myCards].sort((a, b) => {
+    const aTrump = a.suit === room.trumpSuit ? 1 : 0;
+    const bTrump = b.suit === room.trumpSuit ? 1 : 0;
+    if (aTrump !== bTrump) return aTrump - bTrump;
+    return RANK_ORDER[a.rank] - RANK_ORDER[b.rank];
+  });
 
   const otherPlayers = room.players.filter(p => p.id !== myId);
 
@@ -182,7 +243,13 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
         <header className={styles.header}>
           <div className={styles.headerLeft}>
             <span className={styles.titleSmall}>🃏 Дурак</span>
-            <span className={styles.code}>#{room.code}</span>
+            <span
+              className={[styles.code, codeCopied ? styles.codeCopied : ''].join(' ')}
+              onClick={handleCopyCode}
+              title="Скопировать ссылку"
+            >
+              {codeCopied ? '✓ скопировано' : `#${room.code}`}
+            </span>
           </div>
           <button className={styles.leaveBtn} onClick={onLeave}>Выйти</button>
         </header>
@@ -198,10 +265,6 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
             ))}
           </ul>
         </section>
-
-        <button className={styles.copyBtn} onClick={handleCopyLink}>
-          {copied ? '✓ Ссылка скопирована' : 'Скопировать ссылку на комнату'}
-        </button>
 
         {isHost ? (
           <div className={styles.lobbyActions}>
@@ -244,14 +307,18 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
   else if (isDefender) phaseLabel = 'Защищайтесь';
   else if (room.canThrow) phaseLabel = 'Можно подкинуть';
 
-  const sortedCards = [...room.myCards].sort((a, b) => RANK_ORDER[a.rank] - RANK_ORDER[b.rank]);
-
   return (
     <div className={styles.container}>
       <header className={styles.header}>
         <div className={styles.headerLeft}>
           <span className={styles.phase}>{phaseLabel}</span>
-          <span className={styles.code}>#{room.code}</span>
+          <span
+            className={[styles.code, codeCopied ? styles.codeCopied : ''].join(' ')}
+            onClick={handleCopyCode}
+            title="Скопировать ссылку"
+          >
+            {codeCopied ? '✓' : `#${room.code}`}
+          </span>
         </div>
         <button className={styles.leaveBtn} onClick={onLeave}>Выйти</button>
       </header>
@@ -260,12 +327,7 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
       <div className={styles.infoBar}>
         <div className={styles.trumpInfo}>
           <span className={styles.infoLabel}>Козырь</span>
-          <span
-            className={[
-              styles.trumpSuit,
-              room.trumpSuit && SUIT_RED[room.trumpSuit] ? styles.red : '',
-            ].join(' ')}
-          >
+          <span className={[styles.trumpSuit, room.trumpSuit && SUIT_RED[room.trumpSuit] ? styles.red : ''].join(' ')}>
             {room.trumpSuit ? SUIT_SYMBOL[room.trumpSuit] : '—'}
           </span>
         </div>
@@ -288,6 +350,9 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
                 p.isDone ? styles.opponentDone : '',
               ].join(' ')}
             >
+              {reactions[p.id] && (
+                <span className={styles.reactionBubble}>{reactions[p.id]}</span>
+              )}
               <span className={styles.opponentName}>{p.name}</span>
               <span className={styles.opponentCardCount}>{p.cardCount} 🃏</span>
               {p.id === room.attackerId && <span className={styles.roleBadge}>атака</span>}
@@ -305,19 +370,50 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
           <p className={styles.emptyTable}>Стол пуст</p>
         ) : (
           <div className={styles.tableSlots}>
-            {room.table.map((slot, i) => (
-              <div key={i} className={styles.slot}>
-                <CardView card={slot.attack} dimmed={slot.defense !== null} />
-                {slot.defense ? (
-                  <CardView card={slot.defense} />
-                ) : (
-                  <div className={styles.emptySlot} />
-                )}
-              </div>
-            ))}
+            <AnimatePresence>
+              {room.table.map((slot, i) => (
+                <motion.div
+                  key={i}
+                  className={styles.slot}
+                  layout
+                  initial={{ opacity: 0, y: -16 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.8 }}
+                  transition={{ duration: 0.2 }}
+                >
+                  <CardView card={slot.attack} dimmed={slot.defense !== null} />
+                  {slot.defense ? (
+                    <motion.div
+                      initial={{ opacity: 0, y: -12 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.18 }}
+                    >
+                      <CardView card={slot.defense} />
+                    </motion.div>
+                  ) : (
+                    <div className={styles.emptySlot} />
+                  )}
+                </motion.div>
+              ))}
+            </AnimatePresence>
           </div>
         )}
       </div>
+
+      {/* История последнего отбоя */}
+      {room.lastDiscard && room.lastDiscard.length > 0 && room.table.length === 0 && (
+        <div className={styles.lastDiscard}>
+          <div className={styles.lastDiscardLabel}>Последний отбой</div>
+          <div className={styles.lastDiscardSlots}>
+            {room.lastDiscard.map((slot, i) => (
+              <div key={i} className={styles.lastDiscardSlot}>
+                <CardView card={slot.attack} small dimmed />
+                {slot.defense && <CardView card={slot.defense} small dimmed />}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Ошибка + кнопки действий */}
       {error && <p className={styles.error}>{error}</p>}
@@ -337,26 +433,45 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
         </div>
       )}
 
+      {/* Быстрые реакции */}
+      <div className={styles.emojiBar}>
+        {EMOJIS.map(e => (
+          <button key={e} className={styles.emojiBtn} onClick={() => handleReact(e)}>
+            {e}
+          </button>
+        ))}
+      </div>
+      {reactions[myId] && (
+        <div className={styles.myReaction}>{reactions[myId]}</div>
+      )}
+
       {/* Рука */}
       <div className={styles.hand}>
-        <h3 className={styles.sectionLabel}>
-          Моя рука ({room.myCards.length})
-        </h3>
-        <div className={styles.handCards}>
-          {sortedCards.map((card) => (
-            <CardView
-              key={cardKey(card)}
-              card={card}
-              onClick={() => handleCardClick(card)}
-              disabled={!canAct}
-              dimmed={validDefenseKeys !== null && !validDefenseKeys.has(cardKey(card))}
-              valid={validDefenseKeys !== null && validDefenseKeys.has(cardKey(card))}
-            />
-          ))}
-          {room.myCards.length === 0 && (
-            <p className={styles.emptyHand}>Карт нет — вы выбыли из игры 🎉</p>
-          )}
-        </div>
+        <h3 className={styles.sectionLabel}>Моя рука ({room.myCards.length})</h3>
+        <motion.div layout className={styles.handCards}>
+          <AnimatePresence>
+            {sortedCards.map((card) => (
+              <motion.div
+                key={cardKey(card)}
+                layout
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.7 }}
+                transition={{ duration: 0.18 }}
+              >
+                <CardView
+                  card={card}
+                  onClick={() => handleCardClick(card)}
+                  disabled={!canAct}
+                  hint={showHint && validDefenseKeys?.has(cardKey(card))}
+                />
+              </motion.div>
+            ))}
+          </AnimatePresence>
+        </motion.div>
+        {room.myCards.length === 0 && (
+          <p className={styles.emptyHand}>Карт нет — вы выбыли из игры 🎉</p>
+        )}
       </div>
     </div>
   );

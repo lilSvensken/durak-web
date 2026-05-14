@@ -39,6 +39,14 @@
   font-size: 0.95rem;
   color: #7c6af7;
   letter-spacing: 2px;
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 2px 6px;
+  transition: background 0.15s;
+}
+.code:hover { background: #7c6af722; }
+.codeCopied {
+  color: #2ecc71;
 }
 
 .leaveBtn {
@@ -107,12 +115,28 @@
   flex: 1;
   min-width: 130px;
   border: 2px solid transparent;
-  transition: border-color 0.2s;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  position: relative;
 }
 
-.opponentAttacker { border-color: #e67e22; }
-.opponentDefender { border-color: #3498db; }
-.opponentDone     { opacity: 0.45; }
+@keyframes pulseAttacker {
+  0%, 100% { box-shadow: 0 0 8px #e67e2255; }
+  50%       { box-shadow: 0 0 18px #e67e22aa; }
+}
+@keyframes pulseDefender {
+  0%, 100% { box-shadow: 0 0 8px #3498db55; }
+  50%       { box-shadow: 0 0 18px #3498dbaa; }
+}
+
+.opponentAttacker {
+  border-color: #e67e22;
+  animation: pulseAttacker 2s ease-in-out infinite;
+}
+.opponentDefender {
+  border-color: #3498db;
+  animation: pulseDefender 2s ease-in-out infinite;
+}
+.opponentDone { opacity: 0.45; }
 
 .opponentName {
   font-size: 0.875rem;
@@ -143,6 +167,21 @@
   border-radius: 99px;
   background: #2ecc7133;
   color: #2ecc71;
+}
+
+.reactionBubble {
+  position: absolute;
+  top: -22px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 1.4rem;
+  animation: bubbleIn 0.3s ease-out;
+  pointer-events: none;
+}
+
+@keyframes bubbleIn {
+  from { transform: translateX(-50%) scale(0.4); opacity: 0; }
+  to   { transform: translateX(-50%) scale(1);   opacity: 1; }
 }
 
 /* ── Table ─────────────────────────────────────────────────────────────────── */
@@ -188,12 +227,37 @@
   height: 84px;
   border: 2px dashed #2a2a3a;
   border-radius: 7px;
-  transition: border-color 0.2s;
 }
 
-.emptySlotActive {
-  border-color: #7c6af7;
-  background: #7c6af711;
+/* ── Last discard ──────────────────────────────────────────────────────────── */
+.lastDiscard {
+  background: #1a1a28;
+  border-radius: 10px;
+  padding: 10px 14px;
+  border: 1px solid #2a2a3a;
+}
+
+.lastDiscardLabel {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #444;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.lastDiscardSlots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  opacity: 0.55;
+}
+
+.lastDiscardSlot {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  align-items: center;
 }
 
 /* ── Card ──────────────────────────────────────────────────────────────────── */
@@ -232,19 +296,24 @@
   color: #cc2222;
 }
 
-.cardSelected {
-  border-color: #7c6af7 !important;
-  transform: translateY(-10px) !important;
-  box-shadow: 0 8px 20px #7c6af760 !important;
-}
-
 .cardDimmed {
   opacity: 0.35;
 }
 
-.cardValid {
-  border-color: #2ecc71 !important;
-  box-shadow: 0 0 10px #2ecc7155;
+/* Wiggle hint: plays for 0.6s then stays still until next 10s cycle */
+@keyframes wiggle {
+  0%    { transform: rotate(0deg); }
+  6%    { transform: rotate(-4deg); }
+  12%   { transform: rotate(4deg); }
+  18%   { transform: rotate(-3deg); }
+  24%   { transform: rotate(3deg); }
+  30%   { transform: rotate(0deg); }
+  100%  { transform: rotate(0deg); }
+}
+
+.cardHint {
+  animation: wiggle 10s ease-in-out infinite;
+  transform-origin: center bottom;
 }
 
 .cardRank {
@@ -293,18 +362,37 @@
   text-align: center;
 }
 
+/* ── Emoji reactions ────────────────────────────────────────────────────────── */
+.emojiBar {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+
+.emojiBtn {
+  background: #1e1e2a;
+  border: 1px solid #2a2a3a;
+  border-radius: 99px;
+  font-size: 1.3rem;
+  padding: 6px 10px;
+  cursor: pointer;
+  transition: transform 0.1s, background 0.15s;
+  line-height: 1;
+}
+.emojiBtn:hover { background: #2a2a3a; transform: scale(1.15); }
+.emojiBtn:active { transform: scale(0.92); }
+
+.myReaction {
+  text-align: center;
+  font-size: 1.8rem;
+  animation: bubbleIn 0.3s ease-out;
+  height: 2rem;
+}
+
 /* ── Hand ──────────────────────────────────────────────────────────────────── */
 .hand {
   border-top: 1px solid #1e1e2a;
   padding-top: 10px;
-}
-
-.handHint {
-  color: #7c6af7;
-  font-weight: 400;
-  font-size: 0.7rem;
-  text-transform: none;
-  letter-spacing: 0;
 }
 
 .handCards {

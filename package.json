@@ -9,6 +9,7 @@
     "generate-icons": "node scripts/generate-icons.js"
   },
   "dependencies": {
+    "framer-motion": "^12.38.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "socket.io-client": "^4.7.2"

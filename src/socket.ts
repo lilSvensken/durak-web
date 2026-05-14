@@ -4,6 +4,7 @@ import { Card, RoomView } from './types';
 interface ServerToClientEvents {
   'room:updated': (room: RoomView) => void;
   'room:error': (message: string) => void;
+  'react:received': (payload: { playerId: string; emoji: string }) => void;
 }
 
 interface ClientToServerEvents {
@@ -16,6 +17,7 @@ interface ClientToServerEvents {
   'game:throw': (card: Card, cb: (err: string | null) => void) => void;
   'game:take': (cb: (err: string | null) => void) => void;
   'game:done': (cb: (err: string | null) => void) => void;
+  'game:react': (emoji: string) => void;
 }
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL ?? 'http://localhost:3001';
