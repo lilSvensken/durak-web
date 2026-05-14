@@ -17,6 +17,7 @@ interface ClientToServerEvents {
   'game:throw': (card: Card, cb: (err: string | null) => void) => void;
   'game:take': (cb: (err: string | null) => void) => void;
   'game:done': (cb: (err: string | null) => void) => void;
+  'game:confirm_take': (cb: (err: string | null) => void) => void;
   'game:react': (emoji: string) => void;
 }
 

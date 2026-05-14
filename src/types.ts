@@ -33,5 +33,5 @@ export interface RoomView {
   defenderId: string;
   canThrow: boolean;
   fool: string | null;
-  lastDiscard: AttackSlot[] | null;
+  defenderTaking: boolean;
 }

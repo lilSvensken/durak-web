@@ -229,36 +229,6 @@
   border-radius: 7px;
 }
 
-/* ── Last discard ──────────────────────────────────────────────────────────── */
-.lastDiscard {
-  background: #1a1a28;
-  border-radius: 10px;
-  padding: 10px 14px;
-  border: 1px solid #2a2a3a;
-}
-
-.lastDiscardLabel {
-  font-size: 0.65rem;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  color: #444;
-  margin-bottom: 8px;
-  font-weight: 600;
-}
-
-.lastDiscardSlots {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  opacity: 0.55;
-}
-
-.lastDiscardSlot {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  align-items: center;
-}
 
 /* ── Card ──────────────────────────────────────────────────────────────────── */
 .card {
@@ -355,6 +325,15 @@
   font-size: 0.95rem;
 }
 .doneBtn:hover { opacity: 0.85; }
+
+.confirmBtn {
+  background: #e67e22;
+  color: #fff;
+  flex: 1;
+  padding: 13px;
+  font-size: 0.95rem;
+}
+.confirmBtn:hover { opacity: 0.85; }
 
 .error {
   color: #ff6b6b;

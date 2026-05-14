@@ -78,7 +78,6 @@ function CardView({
         red ? styles.cardRed : '',
         dimmed ? styles.cardDimmed : '',
         hint ? styles.cardHint : '',
-        small ? styles.cardSmall : '',
       ].join(' ')}
       onClick={onClick}
       disabled={disabled}
@@ -115,10 +114,30 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
   const canAct = isAttacker || isDefender || room.canThrow;
   const isMyTurn = isAttacker || isDefender;
 
+  // Cards valid for defense against the first open slot
   const firstOpenSlot = isDefender ? room.table.find(s => s.defense === null) : null;
   const validDefenseKeys = firstOpenSlot && room.trumpSuit
     ? new Set(room.myCards.filter(c => beats(firstOpenSlot.attack, c, room.trumpSuit!)).map(cardKey))
     : null;
+
+  // Sort: non-trumps by rank, then trumps by rank
+  const sortedCards = [...room.myCards].sort((a, b) => {
+    const aTrump = a.suit === room.trumpSuit ? 1 : 0;
+    const bTrump = b.suit === room.trumpSuit ? 1 : 0;
+    if (aTrump !== bTrump) return aTrump - bTrump;
+    return RANK_ORDER[a.rank] - RANK_ORDER[b.rank];
+  });
+
+  // The single card to wiggle as hint
+  let hintCardKey: string | null = null;
+  if (showHint) {
+    if (isDefender && validDefenseKeys) {
+      const hintCard = sortedCards.find(c => validDefenseKeys.has(cardKey(c)));
+      if (hintCard) hintCardKey = cardKey(hintCard);
+    } else if (isAttacker && sortedCards.length > 0) {
+      hintCardKey = cardKey(sortedCards[0]);
+    }
+  }
 
   // Sound + vibrate when turn starts
   useEffect(() => {
@@ -129,26 +148,27 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
     wasMyTurn.current = isMyTurn;
   }, [isMyTurn]);
 
-  // Wiggle hint timer: 30s inactivity → show, resets on action
+  // Wiggle hint: 30s inactivity when it's your turn (attack or defend)
+  const shouldHint = (isDefender && !!firstOpenSlot) || (isAttacker && room.table.length === 0);
   useEffect(() => {
     setShowHint(false);
     if (hintTimer.current) clearTimeout(hintTimer.current);
-    if (isDefender && firstOpenSlot) {
+    if (shouldHint) {
       hintTimer.current = setTimeout(() => setShowHint(true), 30_000);
     }
     return () => { if (hintTimer.current) clearTimeout(hintTimer.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isDefender, room.table.length]);
+  }, [shouldHint, room.table.length]);
 
   function resetHintTimer() {
     setShowHint(false);
     if (hintTimer.current) clearTimeout(hintTimer.current);
-    if (isDefender && firstOpenSlot) {
+    if (shouldHint) {
       hintTimer.current = setTimeout(() => setShowHint(true), 30_000);
     }
   }
 
-  // Emoji reactions listener
+  // Emoji reactions
   useEffect(() => {
     function onReact({ playerId, emoji }: { playerId: string; emoji: string }) {
       setReactions(prev => ({ ...prev, [playerId]: emoji }));
@@ -187,7 +207,7 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
     setError('');
     resetHintTimer();
 
-    if (isDefender) {
+    if (isDefender && !room.defenderTaking) {
       const openSlot = room.table.find(slot => slot.defense === null);
       if (!openSlot) return;
       socket.emit('game:defend', { attack: openSlot.attack, defense: card }, (err) => {
@@ -212,8 +232,14 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
 
   function handleTake() {
     setError('');
-    resetHintTimer();
     socket.emit('game:take', (err) => {
+      if (err) setError(err);
+    });
+  }
+
+  function handleConfirmTake() {
+    setError('');
+    socket.emit('game:confirm_take', (err) => {
       if (err) setError(err);
     });
   }
@@ -225,14 +251,6 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
       if (err) setError(err);
     });
   }
-
-  // Sort: non-trumps by rank, then trumps by rank (trumps go right)
-  const sortedCards = [...room.myCards].sort((a, b) => {
-    const aTrump = a.suit === room.trumpSuit ? 1 : 0;
-    const bTrump = b.suit === room.trumpSuit ? 1 : 0;
-    if (aTrump !== bTrump) return aTrump - bTrump;
-    return RANK_ORDER[a.rank] - RANK_ORDER[b.rank];
-  });
 
   const otherPlayers = room.players.filter(p => p.id !== myId);
 
@@ -303,8 +321,8 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
 
   // ── Игра ───────────────────────────────────────────────────────────────────
   let phaseLabel = 'Ожидание';
-  if (isAttacker) phaseLabel = 'Ваш ход — атакуйте';
-  else if (isDefender) phaseLabel = 'Защищайтесь';
+  if (isAttacker) phaseLabel = room.defenderTaking ? 'Подкиньте карты или подтвердите' : 'Ваш ход — атакуйте';
+  else if (isDefender) phaseLabel = room.defenderTaking ? 'Ждёте подтверждения атакующего' : 'Защищайтесь';
   else if (room.canThrow) phaseLabel = 'Можно подкинуть';
 
   return (
@@ -356,7 +374,11 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
               <span className={styles.opponentName}>{p.name}</span>
               <span className={styles.opponentCardCount}>{p.cardCount} 🃏</span>
               {p.id === room.attackerId && <span className={styles.roleBadge}>атака</span>}
-              {p.id === room.defenderId && <span className={styles.roleBadge}>защита</span>}
+              {p.id === room.defenderId && (
+                <span className={styles.roleBadge}>
+                  {room.defenderTaking ? 'берёт' : 'защита'}
+                </span>
+              )}
               {p.isDone && <span className={styles.doneBadge}>вышел</span>}
             </div>
           ))}
@@ -400,38 +422,30 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
         )}
       </div>
 
-      {/* История последнего отбоя */}
-      {room.lastDiscard && room.lastDiscard.length > 0 && room.table.length === 0 && (
-        <div className={styles.lastDiscard}>
-          <div className={styles.lastDiscardLabel}>Последний отбой</div>
-          <div className={styles.lastDiscardSlots}>
-            {room.lastDiscard.map((slot, i) => (
-              <div key={i} className={styles.lastDiscardSlot}>
-                <CardView card={slot.attack} small dimmed />
-                {slot.defense && <CardView card={slot.defense} small dimmed />}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Ошибка + кнопки действий */}
+      {/* Ошибка */}
       {error && <p className={styles.error}>{error}</p>}
 
-      {canAct && (
-        <div className={styles.actionButtons}>
-          {isDefender && (
-            <button className={styles.takeBtn} onClick={handleTake}>
-              Взять карты
-            </button>
-          )}
-          {(isAttacker || room.canThrow) && (
-            <button className={styles.doneBtn} onClick={handleDone}>
-              Готово
-            </button>
-          )}
-        </div>
-      )}
+      {/* Кнопки действий — только нужные */}
+      <div className={styles.actionButtons}>
+        {/* Защитник: "Взять карты" пока не подтвердил взятие */}
+        {isDefender && !room.defenderTaking && (
+          <button className={styles.takeBtn} onClick={handleTake}>
+            Взять карты
+          </button>
+        )}
+        {/* Атакующий: "Подтвердить" когда защитник берёт */}
+        {isAttacker && room.defenderTaking && (
+          <button className={styles.confirmBtn} onClick={handleConfirmTake}>
+            Подтвердить
+          </button>
+        )}
+        {/* Атакующий: "Бито" после хода и когда все карты прикрыты */}
+        {isAttacker && !room.defenderTaking && room.table.length > 0 && (
+          <button className={styles.doneBtn} onClick={handleDone}>
+            Бито
+          </button>
+        )}
+      </div>
 
       {/* Быстрые реакции */}
       <div className={styles.emojiBar}>
@@ -462,8 +476,8 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
                 <CardView
                   card={card}
                   onClick={() => handleCardClick(card)}
-                  disabled={!canAct}
-                  hint={showHint && validDefenseKeys?.has(cardKey(card))}
+                  disabled={!canAct || (isDefender && room.defenderTaking)}
+                  hint={hintCardKey === cardKey(card)}
                 />
               </motion.div>
             ))}
