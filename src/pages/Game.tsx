@@ -26,12 +26,13 @@ const RANK_ORDER: Record<string, number> = {
 const EMOJIS = ['👍', '😂', '🤔', '😱', '🤦'];
 
 const PHRASES = {
-  myTurnStart:  ['Твой ход 👀', 'Ходи давай', 'Ну, удиви меня', 'Жду…'],
-  inactivity:   ['Я жду 🥱', 'Заснул?', 'Ну чего ты…', 'Тук-тук, твой ход'],
-  opponentTake: ['Эх, заберу…', 'Ладно, мои будут', 'Ну вы, блин, даёте 😤', 'Беру, беру'],
-  bito:         ['Отбито 😎', 'Не на того напал', 'Изи', 'Дальше!'],
-  throw:        ['А вот ещё!', 'Держи подарочек 🎁', 'И эту отбей', 'Не всё ещё'],
-  lastCard:     ['Последняя!', 'Почти всё…', 'Ещё чуть-чуть', 'Я близко 🔥'],
+  attackerTurn:    ['Твой ход 👀', 'Нападай!', 'Ходи давай', 'Ну, удиви меня'],
+  defenderFirst:   ['Отбивайся!', 'Попробуй-ка', 'Держи 🃏', 'Лови!'],
+  defenderMore:    ['Ещё!', 'Ещё одну', 'И вот эту', 'У меня ещё есть 😏'],
+  inactivity:      ['Я жду 🥱', 'Заснул?', 'Ну чего ты…', 'Тук-тук, твой ход'],
+  opponentTake:    ['Эх, заберу…', 'Ладно, мои будут', 'Ну вы, блин, даёте 😤', 'Беру, беру'],
+  bito:            ['Отбито 😎', 'Не на того напал', 'Изи', 'Дальше!'],
+  lastCard:        ['Последняя!', 'Почти всё…', 'Ещё чуть-чуть', 'Я близко 🔥'],
 } as const;
 
 function pickPhrase(bucket: readonly string[], lastPhrase?: string): string {
@@ -226,7 +227,8 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
           ? otherPlayers.find(p => p.id === room.defenderId)
           : otherPlayers.find(p => p.id === room.attackerId))
           ?? otherPlayers[0];
-        showBubble(pickPhrase(PHRASES.myTurnStart, lastBubbleTextRef.current), speaker.id);
+        const bucket = isAttacker ? PHRASES.attackerTurn : PHRASES.defenderFirst;
+        showBubble(pickPhrase(bucket, lastBubbleTextRef.current), speaker.id);
       }
     }
     wasMyTurn.current = isMyTurn;
@@ -270,11 +272,11 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
       }
     }
 
-    // Opponent threw an extra card while I'm defending
+    // Opponent threw an extra card while I'm defending (2nd, 3rd, … card)
     if (isDefender && tableLen > prevTableLen && prevTableLen > 0) {
       const thrower = otherPlayers.find(p => p.id === room.attackerId) ?? otherPlayers[0];
       if (thrower) {
-        showBubble(pickPhrase(PHRASES.throw, lastBubbleTextRef.current), thrower.id);
+        showBubble(pickPhrase(PHRASES.defenderMore, lastBubbleTextRef.current), thrower.id);
       }
     }
 
@@ -285,10 +287,19 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
     for (const p of otherPlayers) prevOpponentCardCountsRef.current[p.id] = p.cardCount;
   }, [room]);
 
+  // True only when this player is actually blocking the game and must act.
+  // Excludes "waiting" states: attacker who attacked but defender hasn't responded yet,
+  // defender who covered all cards but attacker hasn't clicked бито.
+  const waitingForMyAction =
+    (isAttacker && room.table.length === 0) ||           // must attack
+    (isAttacker && allCovered && !room.defenderTaking) || // must click бито
+    (isAttacker && room.defenderTaking) ||                // must confirm or throw more
+    (isDefender && hasOpenSlots && !room.defenderTaking); // must beat uncovered cards
+
   // Inactivity nudge: 15 s → bubble, repeats every 20 s. Resets on any action.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (!isMyTurn || otherPlayers.length === 0) return;
+    if (!waitingForMyAction || otherPlayers.length === 0) return;
     const targetId = otherPlayers[0].id;
     const first = setTimeout(() => {
       showBubble(pickPhrase(PHRASES.inactivity, lastBubbleTextRef.current), targetId);
@@ -300,7 +311,7 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
       clearTimeout(first);
       if (nudgeTimerRef.current) { clearTimeout(nudgeTimerRef.current); nudgeTimerRef.current = null; }
     };
-  }, [isMyTurn, lastActionAt]);
+  }, [waitingForMyAction, lastActionAt]);
 
   // Wiggle hint: 30s inactivity when it's your turn (attack or defend)
   const shouldHint = (isDefender && hasOpenSlots) || (isAttacker && room.table.length === 0);
