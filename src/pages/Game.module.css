@@ -169,19 +169,9 @@
   color: #2ecc71;
 }
 
-.reactionBubble {
-  position: absolute;
-  top: -22px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 1.4rem;
-  animation: bubbleIn 0.3s ease-out;
-  pointer-events: none;
-}
-
 @keyframes bubbleIn {
-  from { transform: translateX(-50%) scale(0.4); opacity: 0; }
-  to   { transform: translateX(-50%) scale(1);   opacity: 1; }
+  from { transform: scale(0.4); opacity: 0; }
+  to   { transform: scale(1);   opacity: 1; }
 }
 
 /* ── Table ─────────────────────────────────────────────────────────────────── */
@@ -227,6 +217,30 @@
   height: 84px;
   border: 2px dashed #2a2a3a;
   border-radius: 7px;
+}
+
+.slotTarget {
+  cursor: pointer;
+}
+
+.emptySlotTarget {
+  border-color: #7c6af7;
+  background: #7c6af710;
+  animation: pulseSlot 1.2s ease-in-out infinite;
+}
+
+@keyframes pulseSlot {
+  0%, 100% { box-shadow: 0 0 8px #7c6af740; border-color: #7c6af7; }
+  50%       { box-shadow: 0 0 16px #7c6af799; border-color: #a594ff; }
+}
+
+.slotPrompt {
+  font-size: 0.65rem;
+  color: #7c6af7;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  margin-left: 4px;
 }
 
 

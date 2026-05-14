@@ -133,7 +133,10 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
   const [startError, setStartError] = useState('');
   const [codeCopied, setCodeCopied] = useState(false);
   const [showHint, setShowHint] = useState(false);
-  const [reactions, setReactions] = useState<Record<string, string>>({});
+  // Own emoji reaction (shown near my hand area)
+  const [myReaction, setMyReaction] = useState('');
+  // Card selected by defender waiting for slot choice
+  const [selectedDefenseCard, setSelectedDefenseCard] = useState<Card | null>(null);
   const [opponentBubble, setOpponentBubble] = useState<{ text: string; key: number; targetId: string } | null>(null);
   const [lastActionAt, setLastActionAt] = useState(0);
 
@@ -154,11 +157,15 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
   const isHost = room.hostId === myId;
   const isAttacker = room.attackerId === myId;
   const isDefender = room.defenderId === myId;
-  const canAct = isAttacker || isDefender || room.canThrow;
   const isMyTurn = isAttacker || isDefender;
 
-  // Cards valid for defense against the first open slot
-  const firstOpenSlot = isDefender ? room.table.find(s => s.defense === null) : null;
+  // Open (uncovered) slots on the table
+  const openSlots = room.table.filter(s => s.defense === null);
+  const hasOpenSlots = openSlots.length > 0;
+  const allCovered = room.table.length > 0 && !hasOpenSlots;
+
+  // Cards valid for defense against the first open slot (for wiggle hint)
+  const firstOpenSlot = isDefender ? openSlots[0] ?? null : null;
   const validDefenseKeys = firstOpenSlot && room.trumpSuit
     ? new Set(room.myCards.filter(c => beats(firstOpenSlot.attack, c, room.trumpSuit!)).map(cardKey))
     : null;
@@ -181,6 +188,21 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
       hintCardKey = cardKey(sortedCards[0]);
     }
   }
+
+  // Slot indices the selected defense card can cover
+  const validSlotIndicesForSelected = selectedDefenseCard && room.trumpSuit
+    ? room.table.reduce<number[]>((acc, slot, i) => {
+        if (slot.defense === null && beats(slot.attack, selectedDefenseCard, room.trumpSuit!)) {
+          acc.push(i);
+        }
+        return acc;
+      }, [])
+    : [];
+
+  // Clear selected defense card when table changes (slot covered or new card added)
+  const tableFingerprint = room.table.map(s => s.defense ? '1' : '0').join('');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { setSelectedDefenseCard(null); }, [tableFingerprint]);
 
   const otherPlayers = room.players.filter(p => p.id !== myId);
 
@@ -241,10 +263,8 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
       const wasOpponentDefender = prevDefId !== '' && prevDefId !== myId;
       if (wasOpponentDefender) {
         if (prevDefenderTakingRef.current) {
-          // Defender had signalled taking → it's a take
           showBubble(pickPhrase(PHRASES.opponentTake, lastBubbleTextRef.current), prevDefId);
         } else {
-          // All cards covered + attacker confirmed → бито
           showBubble(pickPhrase(PHRASES.bito, lastBubbleTextRef.current), prevDefId);
         }
       }
@@ -283,7 +303,7 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
   }, [isMyTurn, lastActionAt]);
 
   // Wiggle hint: 30s inactivity when it's your turn (attack or defend)
-  const shouldHint = (isDefender && !!firstOpenSlot) || (isAttacker && room.table.length === 0);
+  const shouldHint = (isDefender && hasOpenSlots) || (isAttacker && room.table.length === 0);
   useEffect(() => {
     setShowHint(false);
     if (hintTimer.current) clearTimeout(hintTimer.current);
@@ -302,21 +322,20 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
     }
   }
 
-  // Emoji reactions
+  // Emoji reactions — opponent reactions go to speech bubble, own reaction shown near hand
   useEffect(() => {
     function onReact({ playerId, emoji }: { playerId: string; emoji: string }) {
-      setReactions(prev => ({ ...prev, [playerId]: emoji }));
-      setTimeout(() => {
-        setReactions(prev => {
-          const next = { ...prev };
-          delete next[playerId];
-          return next;
-        });
-      }, 2500);
+      if (playerId === myId) {
+        setMyReaction(emoji);
+        setTimeout(() => setMyReaction(''), 2500);
+      } else {
+        showBubble(emoji, playerId);
+      }
     }
     socket.on('react:received', onReact);
     return () => { socket.off('react:received', onReact); };
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myId]);
 
   function handleCopyCode() {
     const url = `${window.location.origin}?code=${room.code}`;
@@ -343,11 +362,28 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
     resetHintTimer();
 
     if (isDefender && !room.defenderTaking) {
-      const openSlot = room.table.find(slot => slot.defense === null);
-      if (!openSlot) return;
-      socket.emit('game:defend', { attack: openSlot.attack, defense: card }, (err) => {
-        if (err) setError(err);
-      });
+      if (!room.trumpSuit) return;
+      // Find which open slots this card can cover
+      const validIndices = room.table.reduce<number[]>((acc, slot, i) => {
+        if (slot.defense === null && beats(slot.attack, card, room.trumpSuit!)) acc.push(i);
+        return acc;
+      }, []);
+      if (validIndices.length === 0) {
+        setSelectedDefenseCard(null);
+        return;
+      }
+      if (validIndices.length === 1) {
+        // Auto-cover the only valid slot
+        setSelectedDefenseCard(null);
+        socket.emit('game:defend', { attack: room.table[validIndices[0]].attack, defense: card }, (err) => {
+          if (err) setError(err);
+        });
+        return;
+      }
+      // Multiple valid slots — let player pick by clicking a slot
+      setSelectedDefenseCard(
+        selectedDefenseCard && cardKey(selectedDefenseCard) === cardKey(card) ? null : card
+      );
       return;
     }
 
@@ -363,6 +399,16 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
         if (err) setError(err);
       });
     }
+  }
+
+  function handleSlotClick(slotIndex: number) {
+    if (!selectedDefenseCard) return;
+    setLastActionAt(Date.now());
+    const slot = room.table[slotIndex];
+    setSelectedDefenseCard(null);
+    socket.emit('game:defend', { attack: slot.attack, defense: selectedDefenseCard }, (err) => {
+      if (err) setError(err);
+    });
   }
 
   function handleTake() {
@@ -460,6 +506,18 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
   else if (isDefender) phaseLabel = room.defenderTaking ? 'Ждёте подтверждения атакующего' : 'Защищайтесь';
   else if (room.canThrow) phaseLabel = 'Можно подкинуть';
 
+  // Button visibility rules:
+  // "Взять карты" — defender only when there are uncovered slots
+  const showTakeBtn = isDefender && !room.defenderTaking && hasOpenSlots;
+  // "Бито" — attacker only when all cards on table are covered
+  const showBitoBtn = isAttacker && !room.defenderTaking && allCovered;
+  // "Подтвердить" — attacker when defender is taking
+  const showConfirmBtn = isAttacker && room.defenderTaking;
+
+  // Defender card interactivity: only when there are open slots and not waiting
+  const defenderCanClick = isDefender && !room.defenderTaking && hasOpenSlots;
+  const canAct = isAttacker || defenderCanClick || room.canThrow;
+
   return (
     <div className={styles.container}>
       <header className={styles.header}>
@@ -503,7 +561,7 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
                 p.isDone ? styles.opponentDone : '',
               ].join(' ')}
             >
-              {/* Speech bubble — context bubble wins over "your turn" via React 18 batching */}
+              {/* Speech bubble: handles both chat phrases and emoji reactions */}
               <div className={styles.speechBubbleWrapper}>
                 <AnimatePresence>
                   {opponentBubble?.targetId === p.id && (
@@ -512,9 +570,6 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
                 </AnimatePresence>
               </div>
 
-              {reactions[p.id] && (
-                <span className={styles.reactionBubble}>{reactions[p.id]}</span>
-              )}
               <span className={styles.opponentName}>{p.name}</span>
               <span className={styles.opponentCardCount}>{p.cardCount} 🃏</span>
               {p.id === room.attackerId && <span className={styles.roleBadge}>атака</span>}
@@ -531,36 +586,45 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
 
       {/* Стол */}
       <div className={styles.tableArea}>
-        <h3 className={styles.sectionLabel}>Стол</h3>
+        <h3 className={styles.sectionLabel}>
+          Стол
+          {selectedDefenseCard && (
+            <span className={styles.slotPrompt}> — выберите карту для прикрытия</span>
+          )}
+        </h3>
         {room.table.length === 0 ? (
           <p className={styles.emptyTable}>Стол пуст</p>
         ) : (
           <div className={styles.tableSlots}>
             <AnimatePresence>
-              {room.table.map((slot, i) => (
-                <motion.div
-                  key={i}
-                  className={styles.slot}
-                  layout
-                  initial={{ opacity: 0, y: -16 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.8 }}
-                  transition={{ duration: 0.2 }}
-                >
-                  <CardView card={slot.attack} dimmed={slot.defense !== null} />
-                  {slot.defense ? (
-                    <motion.div
-                      initial={{ opacity: 0, y: -12 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.18 }}
-                    >
-                      <CardView card={slot.defense} />
-                    </motion.div>
-                  ) : (
-                    <div className={styles.emptySlot} />
-                  )}
-                </motion.div>
-              ))}
+              {room.table.map((slot, i) => {
+                const isTarget = validSlotIndicesForSelected.includes(i);
+                return (
+                  <motion.div
+                    key={i}
+                    className={[styles.slot, isTarget ? styles.slotTarget : ''].join(' ')}
+                    layout
+                    initial={{ opacity: 0, y: -16 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.8 }}
+                    transition={{ duration: 0.2 }}
+                    onClick={isTarget ? () => handleSlotClick(i) : undefined}
+                  >
+                    <CardView card={slot.attack} dimmed={slot.defense !== null} />
+                    {slot.defense ? (
+                      <motion.div
+                        initial={{ opacity: 0, y: -12 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.18 }}
+                      >
+                        <CardView card={slot.defense} />
+                      </motion.div>
+                    ) : (
+                      <div className={[styles.emptySlot, isTarget ? styles.emptySlotTarget : ''].join(' ')} />
+                    )}
+                  </motion.div>
+                );
+              })}
             </AnimatePresence>
           </div>
         )}
@@ -569,19 +633,19 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
       {/* Ошибка */}
       {error && <p className={styles.error}>{error}</p>}
 
-      {/* Кнопки действий */}
+      {/* Кнопки действий — строго по правилам */}
       <div className={styles.actionButtons}>
-        {isDefender && !room.defenderTaking && (
+        {showTakeBtn && (
           <button className={styles.takeBtn} onClick={handleTake}>
             Взять карты
           </button>
         )}
-        {isAttacker && room.defenderTaking && (
+        {showConfirmBtn && (
           <button className={styles.confirmBtn} onClick={handleConfirmTake}>
             Подтвердить
           </button>
         )}
-        {isAttacker && !room.defenderTaking && room.table.length > 0 && (
+        {showBitoBtn && (
           <button className={styles.doneBtn} onClick={handleDone}>
             Бито
           </button>
@@ -596,8 +660,8 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
           </button>
         ))}
       </div>
-      {reactions[myId] && (
-        <div className={styles.myReaction}>{reactions[myId]}</div>
+      {myReaction && (
+        <div className={styles.myReaction}>{myReaction}</div>
       )}
 
       {/* Рука */}
@@ -605,23 +669,26 @@ export default function Game({ room, myId, myName: _myName, onLeave }: Props) {
         <h3 className={styles.sectionLabel}>Моя рука ({room.myCards.length})</h3>
         <motion.div layout className={styles.handCards}>
           <AnimatePresence>
-            {sortedCards.map((card) => (
-              <motion.div
-                key={cardKey(card)}
-                layout
-                initial={{ opacity: 0, scale: 0.8 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.7 }}
-                transition={{ duration: 0.18 }}
-              >
-                <CardView
-                  card={card}
-                  onClick={() => handleCardClick(card)}
-                  disabled={!canAct || (isDefender && room.defenderTaking)}
-                  hint={hintCardKey === cardKey(card)}
-                />
-              </motion.div>
-            ))}
+            {sortedCards.map((card) => {
+              const isSelected = selectedDefenseCard !== null && cardKey(selectedDefenseCard) === cardKey(card);
+              return (
+                <motion.div
+                  key={cardKey(card)}
+                  layout
+                  initial={{ opacity: 0, scale: 0.8 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.7 }}
+                  transition={{ duration: 0.18 }}
+                >
+                  <CardView
+                    card={card}
+                    onClick={() => handleCardClick(card)}
+                    disabled={!canAct}
+                    hint={!isSelected && hintCardKey === cardKey(card)}
+                  />
+                </motion.div>
+              );
+            })}
           </AnimatePresence>
         </motion.div>
         {room.myCards.length === 0 && (
